@@ -322,8 +322,8 @@ def preprocess(ifile, opath, vector):
 
 if __name__ == '__main__':
     ifiles = [
-        '/mnt/d/data/L1/with-insitu/yangjiang/S2A_MSIL1C_20200728T025551_N0209_R032_T49QEE_20200728T064156.SAFE',
-        '/mnt/d/data/L1/with-insitu/yangjiang/S2A_MSIL1C_20200728T025551_N0209_R032_T49QFE_20200728T064156.SAFE',
+        '/mnt/d/data/L1/with-insitu/yangjiang/S2A_MSIL1C_20200519T025551_N0209_R032_T49QEE_20200519T060344.SAFE',
+        '/mnt/d/data/L1/with-insitu/yangjiang/S2A_MSIL1C_20200519T025551_N0209_R032_T49QFE_20200519T060344.SAFE',
     ]
     # ifiles = [
     #     '/mnt/d/data/L1/with-insitu/yangjiang/S2B_MSIL1C_20200723T025549_N0209_R032_T49QFE_20200723T055401.SAFE',
@@ -343,4 +343,5 @@ if __name__ == '__main__':
             acolite = AcoliteModel(acolite_dir, opath, sensor='S2B')
         acolite.cloud_shadow_detection(solz, sola, vector=None)
         acolite.tci_gen()
+        shutil.rmtree(acolite_dir)
     

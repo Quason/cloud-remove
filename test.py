@@ -8,12 +8,15 @@ import gdal
 import utils
 
 fn_list = [
-    'C:/Users/Admin/Desktop/rgb_mosaic/S2B_MSI_2020_09_01_02_55_49_T49QFE_tci.tif',
-    'C:/Users/Admin/Desktop/rgb_mosaic/S2B_MSI_2020_09_11_02_55_49_T49QFE_tci.tif',
-    'C:/Users/Admin/Desktop/rgb_mosaic/S2B_MSI_2020_08_22_02_55_49_T49QFE_tci.tif',
-    'C:/Users/Admin/Desktop/rgb_mosaic/S2B_MSI_2020_07_23_02_55_49_T49QFE_tci.tif',
-    'C:/Users/Admin/Desktop/rgb_mosaic/S2A_MSI_2020_07_28_02_55_51_T49QFE_tci.tif',
+    'D:/tmp/pip-test/001-TCI/S2B_MSI_2020_09_01_02_55_49_T49QEE_tci.tif',
+    'D:/tmp/pip-test/001-TCI/S2B_MSI_2020_09_11_02_55_49_T49QEE_tci.tif',
+    'D:/tmp/pip-test/001-TCI/S2B_MSI_2020_08_22_02_55_49_T49QEE_tci.tif',
+    'D:/tmp/pip-test/001-TCI/S2B_MSI_2020_07_23_02_55_49_T49QEE_tci.tif',
+    'D:/tmp/pip-test/001-TCI/S2A_MSI_2020_07_28_02_55_51_T49QEE_tci.tif',
 ]
+fn_base_clear = 'D:/tmp/pip-test/001-TCI/S2A_MSI_2019_09_22_02_55_41_T49QEE_tci.tif'
+
+img_base_clear = cv2.imread(fn_base_clear)
 ds = gdal.Open(fn_list[0])
 geo_trans = ds.GetGeoTransform()
 proj_ref = ds.GetProjection()
@@ -78,11 +81,11 @@ for i in range(labels_struct[0]):
     if (area_tmp < label_cnt*0.5):
         key = labels_struct[1]==i
         key_uint8 = key.astype(np.uint8) * 255
-        key_dilation = cv2.dilate(key_uint8, kernel_dilate)
-        key_edge = (key_uint8==0) * (key_dilation==255)
+        # key_dilation = cv2.dilate(key_uint8, kernel_dilate)
+        # key_edge = (key_uint8==0) * (key_dilation==255)
         for j in range(len(fn_list)-1):
             cloud_tmp = cloud_stack[:,:,j]
-            cloud_cnt_tmp = np.sum(cloud_tmp[key_edge])
+            cloud_cnt_tmp = np.sum(cloud_tmp[key])
             if cloud_cnt_tmp == 0:
                 cloud_cnt = cloud_cnt_tmp
                 select_index = j
@@ -91,8 +94,9 @@ for i in range(labels_struct[0]):
                 cloud_cnt = cloud_cnt_tmp
                 select_index = j
         if cloud_cnt!=0:
-            continue
-        img_fg = rgb_stack[select_index]
+            img_fg = img_base_clear
+        else:
+            img_fg = rgb_stack[select_index]
         block_w0 = int(labels_struct[2][i][0])
         block_w1 = int(labels_struct[2][i][0] + labels_struct[2][i][2])
         block_h0 = int(labels_struct[2][i][1])
@@ -105,6 +109,10 @@ for i in range(labels_struct[0]):
 output = np.flip(output, axis=2)
 dst_fn = fn_list[0].replace('.tif', '_mosaic.tif')
 utils.raster2tif(output, geo_trans, proj_ref, dst_fn, type='uint8', mask=True)
+
+
+# 剩下的用基准的晴空影像填补
+
 
 # for i in range(len(fn_list)):
 #     key = img_stack[:,:,i] == median_stack

@@ -11,7 +11,7 @@ from skimage import color
 
 import utils
 
-def adjust(fn_list):
+def adjust0(fn_list):
     fn_base = fn_list[0]
     for i in range(len(fn_list)-1):
         print('%d of %d...' % (i+1, len(fn_list)-1))
@@ -96,8 +96,105 @@ def adjust(fn_list):
         fn_base = dst_fn
 
 
+def adjust(fn_list, fn_base_clear):
+    img_base_clear = cv2.imread(fn_base_clear)
+    ds = gdal.Open(fn_list[0])
+    geo_trans = ds.GetGeoTransform()
+    proj_ref = ds.GetProjection()
+    img_width = ds.RasterXSize
+    img_height = ds.RasterYSize
+    img_stack = np.zeros((img_height,img_width,len(fn_list)), np.uint8)
+    for i, item in enumerate(fn_list):
+        img = cv2.imread(item)
+        img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        img_stack[:,:,i] = img_gray
+    min_stack = np.min(img_stack, axis=2)
+    max_stack = np.max(img_stack, axis=2)
+    median_stack = np.median(img_stack, axis=2)
+    imedian_stack = np.zeros((img_height,img_width), np.uint8)
+
+    # 判断基准图像的云分布
+    print('基准影像云检测...')
+    img = cv2.imread(fn_list[0])
+    img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    img_std = np.std(img.astype(float), axis=2)
+    key_cloud = (img_gray==max_stack) * (img_gray>150) * (img_std<10) + (img_gray==255) # cloud
+    cloud0 = np.zeros(key_cloud.shape, np.uint8)
+    cloud0[key_cloud] = 255
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    cloud0 = cv2.morphologyEx(cloud0, cv2.MORPH_OPEN, kernel) # 开操作去除碎斑
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    for i in range(20):
+        cloud0 = cv2.dilate(cloud0, kernel)
+    # dst_fn = fn_list[0].replace('.tif', '_cloud_shadow.tif')
+    # utils.raster2tif(cloud0.astype(np.uint8), geo_trans, proj_ref, dst_fn, type='uint8', mask=True)
+
+    # 判断其他影像的云分布
+    print('其它影像云检测...')
+    cloud_stack = np.zeros((np.shape(cloud0)[0], np.shape(cloud0)[1], len(fn_list)-1), np.uint8)
+    rgb_stack = []
+    for i, item in enumerate(fn_list[1:]):
+        print('    %s...' % item)
+        img = cv2.imread(item)
+        rgb_stack.append(img)
+        img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        img_std = np.std(img.astype(float), axis=2)
+        key_cloud = (img_gray==max_stack) * (img_gray>150) * (img_std<10) + (img_gray==255) # cloud
+        dst_fn = fn_list[0].replace('.tif', '_cloud_shadow.tif')
+        cloud = np.zeros(key_cloud.shape, np.uint8)
+        cloud[key_cloud] = 255
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        cloud = cv2.morphologyEx(cloud, cv2.MORPH_OPEN, kernel) # 开操作去除碎斑
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        for n in range(10):
+            cloud = cv2.dilate(cloud, kernel)
+        cloud_stack[:, :, i] = (cloud==255).astype(np.uint8)
+
+    # 遍历寻找最合适的影像进行替换
+    print('泊松融合...')
+    labels_struct = cv2.connectedComponentsWithStats(cloud0, connectivity=8)
+    label_cnt = np.shape(cloud0)[0] * np.shape(cloud0)[1]
+    img_bg = cv2.imread(fn_list[0])
+    kernel_dilate = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    for i in range(labels_struct[0]):
+        area_tmp = labels_struct[2][i][4]
+        cloud_cnt = np.Inf
+        if (area_tmp < label_cnt*0.5):
+            key = labels_struct[1]==i
+            key_uint8 = key.astype(np.uint8) * 255
+            # key_dilation = cv2.dilate(key_uint8, kernel_dilate)
+            # key_edge = (key_uint8==0) * (key_dilation==255)
+            for j in range(len(fn_list)-1):
+                cloud_tmp = cloud_stack[:,:,j]
+                cloud_cnt_tmp = np.sum(cloud_tmp[key])
+                if cloud_cnt_tmp == 0:
+                    cloud_cnt = cloud_cnt_tmp
+                    select_index = j
+                    break
+                elif cloud_cnt_tmp<cloud_cnt:
+                    cloud_cnt = cloud_cnt_tmp
+                    select_index = j
+            if cloud_cnt!=0:
+                img_fg = img_base_clear
+            else:
+                img_fg = rgb_stack[select_index]
+            block_w0 = int(labels_struct[2][i][0])
+            block_w1 = int(labels_struct[2][i][0] + labels_struct[2][i][2])
+            block_h0 = int(labels_struct[2][i][1])
+            block_h1 = int(labels_struct[2][i][1] + labels_struct[2][i][3])
+            img_fg_sub = img_fg[block_h0:block_h1, block_w0:block_w1, :]
+            mask_sub = cloud0[block_h0:block_h1, block_w0:block_w1]
+            center = (int((block_w0 + block_w1)/2), int((block_h0 + block_h1)/2))
+            output = cv2.seamlessClone(img_fg_sub, img_bg, mask_sub, center, cv2.NORMAL_CLONE)
+            img_bg = output
+    output = np.flip(output, axis=2)
+    dst_fn = fn_list[0].replace('.tif', '_mosaic.tif')
+    utils.raster2tif(output, geo_trans, proj_ref, dst_fn, type='uint8', mask=True)
+
+
 def mosaic(fn1, fn2, dst_fn, vector):
     scripts = 'C:/Miniconda3/envs/python37/Lib/site-packages/osgeo/scripts/gdal_merge.py'
+    # mosaic1
     dst_fn_tmp = dst_fn.replace('.tif', '_tmp.tif')
     os.system('python %s -o %s %s %s' % (scripts, dst_fn_tmp, fn1, fn2))
     options = gdal.WarpOptions(
@@ -105,23 +202,46 @@ def mosaic(fn1, fn2, dst_fn, vector):
         cropToCutline=True,
         dstNodata=0
     )
-    gdal.Warp(dst_fn, dst_fn_tmp, options=options)
+    dst_fn1 = dst_fn.replace('.tif', '_1.tif')
+    gdal.Warp(dst_fn1, dst_fn_tmp, options=options)
     os.remove(dst_fn_tmp)
+    # mosaic2
+    dst_fn2 = dst_fn.replace('.tif', '_2.tif')
+    os.system('python %s -o %s %s %s' % (scripts, dst_fn_tmp, fn2, fn1))
+    options = gdal.WarpOptions(
+        cutlineDSName=vector,
+        cropToCutline=True,
+        dstNodata=0
+    )
+    gdal.Warp(dst_fn2, dst_fn_tmp, options=options)
+    os.remove(dst_fn_tmp)
+
+
+def add_proj(fn0, fn1):
+    ds = gdal.Open(fn0)
+    geo_trans = ds.GetGeoTransform()
+    proj_ref = ds.GetProjection()
+    dst_fn = fn1.replace('.tif', '_addproj.tif')
+    data = skimage.io.imread(fn1)
+    utils.raster2tif(data, geo_trans, proj_ref, dst_fn, type='uint8', mask=True)
 
 
 if __name__ == '__main__':
     # fn_list = [
-    #     'D:/tmp/pip-test/001-TCI/S2B_MSI_2020_09_01_02_55_49_T49QFE_tci.tif',
-    #     'D:/tmp/pip-test/001-TCI/S2B_MSI_2020_09_11_02_55_49_T49QFE_tci.tif',
-    #     'D:/tmp/pip-test/001-TCI/S2B_MSI_2020_08_22_02_55_49_T49QFE_tci.tif',
-    #     'D:/tmp/pip-test/001-TCI/S2B_MSI_2020_07_23_02_55_49_T49QFE_tci.tif',
-    #     'D:/tmp/pip-test/001-TCI/S2A_MSI_2020_07_28_02_55_51_T49QFE_tci.tif',
+    #     'D:/tmp/pip-test/001-TCI/2020Q2/S2B_MSI_2020_05_04_02_55_39_T49QFE_tci.tif',
+    #     'D:/tmp/pip-test/001-TCI/2020Q2/S2A_MSI_2020_05_19_02_55_51_T49QFE_tci.tif',
     # ]
-    # adjust(fn_list)
+    # fn_base_clear = 'D:/tmp/pip-test/001-TCI/S2A_MSI_2019_09_22_02_55_41_T49QFE_tci.tif'
+    # adjust(fn_list, fn_base_clear)
 
-    mosaic(
-        'D:/tmp/pip-test/001-TCI/S2B_MSI_2020_09_01_02_55_49_T49QEE_tci_mosaic_mosaic_mosaic_mosaic.tif',
-        'D:/tmp/pip-test/001-TCI/S2B_MSI_2020_09_01_02_55_49_T49QFE_tci_mosaic_mosaic_mosaic_mosaic.tif',
-        'D:/tmp/pip-test/001-TCI/mosaic.tif',
-        'D:/data/vector/yangdongqu.json',
-    )
+    # mosaic(
+    #     'D:/tmp/pip-test/001-TCI/2020Q2/S2B_MSI_2020_05_04_02_55_39_T49QEE_tci_mosaic.tif',
+    #     'D:/tmp/pip-test/001-TCI/2020Q2/S2B_MSI_2020_05_04_02_55_39_T49QFE_tci_mosaic.tif',
+    #     'D:/tmp/pip-test/001-TCI/2020Q2/mosaic.tif',
+    #     'D:/data/vector/yangdongqu.json',
+    # )
+
+    # add proj after PS
+    fn0 = 'D:/tmp/pip-test/001-TCI/2020Q2/mosaic_1.tif'
+    fn1 = 'D:/tmp/pip-test/001-TCI/2020Q2/mosaic.tif'
+    add_proj(fn0, fn1)
